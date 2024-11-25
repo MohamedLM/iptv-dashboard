@@ -1,0 +1,128 @@
+name: AWS Deployment
+on:
+  push:
+    branches:
+      - main
+
+env:
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+  AUTH_URL: ${{ vars.AUTH_SECRET }}
+  STATIC_HOST: ${{ vars.STATIC_HOST }}
+  NOVU_SECRET_KEY: ${{ secrets.NOVU_SECRET_KEY }}
+  NEXT_PUBLIC_NOVU_IDENTIFIER: ${{ vars.NEXT_PUBLIC_NOVU_IDENTIFIER }}
+  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+  SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+  SMTP_HOST: ${{ vars.SMTP_HOST }}
+
+jobs:
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Filtering changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            novu:
+              - 'novu/**'
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: pnpm/action-setup@v4
+        name: Install PNPM
+        with:
+          version: 9
+          run_install: false
+
+      - name: Get PNPM store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # - name: Install dependencies
+      #   run: pnpm install
+
+      - name: Configure Credentials CLI
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-3
+
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v3
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push image to Amazon ECR
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          # platforms: linux/arm64
+          target: dashboard
+          tags: 638603184833.dkr.ecr.eu-west-3.amazonaws.com/iptv-dashboard:production
+          build-args: |
+            DATABASE_URL=${{ env.DATABASE_URL }}
+            AUTH_SECRET=${{ env.AUTH_SECRET }}
+            STATIC_HOST=${{ env.STATIC_HOST }}
+            NOVU_SECRET_KEY=${{ env.NOVU_SECRET_KEY }}
+            NEXT_PUBLIC_NOVU_IDENTIFIER=${{ env.NEXT_PUBLIC_NOVU_IDENTIFIER }}
+            SMTP_PASSWORD=${{ env.SMTP_PASSWORD }}
+            SMTP_USERNAME=${{ env.SMTP_USERNAME }}
+            SMTP_HOST=${{ env.SMTP_HOST }}
+
+      - name: Install Serverless
+        run: pnpm i -g serverless@3.39.0
+
+      - name: Deploy Serverless
+        run: serverless deploy --stage production --verbose
+
+      - name: Delete old ECR images
+        uses: agungwa/ECR-Lifecycle-Manager@v1.1.0
+        with:
+          repo_name: iptv-dashboard
+          num_to_keep: 2
+          dry_run: false
+          delete_untagged_images: true
+
+      - name: Invalidate CloudFront
+        uses: chetan/invalidate-cloudfront-action@v2
+        env:
+          DISTRIBUTION: ${{ vars.CLOUDFRONT_DISTRIBUTION }}
+          PATHS: "/*"
+          AWS_REGION: "eu-west-3"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      # - name: Sync workflow to Novu
+      #   id: sync
+      #   if: steps.filter.outputs.novu == 'true'
+      #   uses: fjogeleit/http-request-action@v1
+      #   with:
+      #     url: "https://api.novu.co/v1/bridge/sync?source=githubAction"
+      #     method: "POST"
+      #     customHeaders: '{"Content-Type": "application/json", "Authorization": "ApiKey ${{secrets.NOVU_SECRET_KEY}}"}'
+      #     data: '{"bridgeUrl": "https://fsq76uxhbfgceejosbpsz5vrr40chofd.lambda-url.eu-west-3.on.aws/api/novu"}'
+
+      # - name: Show Sync Response
+      #   run: |
+      #     echo ${{ steps.sync.outputs.status }}
+      #     echo ${{ steps.sync.outputs.response }}

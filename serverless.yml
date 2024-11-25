@@ -1,0 +1,124 @@
+service: iptv-dashboard
+frameworkVersion: "3"
+
+# custom:
+  # config: ${file(./serverless-config.js)}
+
+provider:
+  name: aws
+  region: eu-west-3
+  runtime: nodejs20.x
+  # architecture: arm64 # disable for now, since we dont managed to build arm64 image in github action
+  stage: ${opt:stage,'staging'}
+  versionFunctions: false # optional, default is true
+  # vpc:
+  #   securityGroupIds:
+  #   - sg-087879c2c4cfcf4ad
+  #   - sg-0f739d46805e25ec8
+  #   subnetIds:
+  #     - subnet-0de2aa80e319e8136
+  #     - subnet-0464af625643faec4
+  iam:
+    role:
+      name: iptv-dashboard-serverless
+      tags:
+        project: iptv-dashboard
+      statements:
+        - Effect: 'Allow'
+          Action:
+            - 'lambda:InvokeFunction'
+          Resource:
+          - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${self:service}-${opt:stage, self:provider.stage}-*
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - ec2:CreateNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            - ec2:DeleteNetworkInterface
+            - ec2:AssignPrivateIpAddresses
+            - ec2:UnassignPrivateIpAddresses
+            - ec2:DescribeSecurityGroups,
+            - ec2:DescribeSubnets,
+            - ec2:DescribeVpcs
+          Resource: "*"
+  tags:
+    project: iptv-dashboard
+  stackTags:
+    project: iptv-dashboard
+  # ecr:
+  #   images:
+  #     iptv-dashboard-web:
+  #       uri: 638603184833.dkr.ecr.eu-west-3.amazonaws.com/iptv-dashboard:${self:provider.stage}
+
+functions:
+  web:
+    url:
+      # Allow CORS for all requests from any origin
+      cors: true
+      # authorizer: aws_iam
+      invokeMode: RESPONSE_STREAM # or BUFFERED
+    environment:
+      AWS_LWA_INVOKE_MODE: response_stream
+      AUTH_TRUST_HOST: true
+      AUTH_URL: ${env:AUTH_URL, ''}
+      DATABASE_URL: ${env:DATABASE_URL, ''}
+      AUTH_SECRET: ${env:AUTH_SECRET, ''}
+      STATIC_HOST: ${env:STATIC_HOST, ''}
+      NOVU_SECRET_KEY: ${env:NOVU_SECRET_KEY, ''}
+      NEXT_PUBLIC_NOVU_IDENTIFIER: ${env:NEXT_PUBLIC_NOVU_IDENTIFIER, ''}
+      SMTP_HOST: ${env:SMTP_HOST, ''}
+      SMTP_USERNAME: ${env:SMTP_USERNAME, ''}
+      SMTP_PASSWORD: ${env:SMTP_PASSWORD, ''}
+    image: 638603184833.dkr.ecr.eu-west-3.amazonaws.com/iptv-dashboard:${self:provider.stage}
+    timeout: 60
+    # warmup:
+    #   default:
+    #     enabled: true
+    #     concurrency: 1
+
+# resources:
+#   Resources:
+#     CloudFrontDistribution:
+#       Type: AWS::CloudFront::Distribution
+#       Properties:
+#         DistributionConfig:
+#           Aliases:
+#             - ${self:custom.config.domain}
+#           ViewerCertificate:
+#             AcmCertificateArn: ${self:custom.config.acmCertificateArn}
+#             MinimumProtocolVersion: TLSv1.2_2021
+#             SslSupportMethod: sni-only
+#           Origins:
+#             - DomainName: ${self:custom.config.lambdaDomain}
+#               Id: nextjsOrigin
+#               CustomOriginConfig:
+#                 HTTPSPort: 443
+#                 OriginProtocolPolicy: https-only
+#           Enabled: true
+#           DefaultCacheBehavior:
+#             TargetOriginId: nextjsOrigin
+#             AllowedMethods:
+#               - GET
+#               - HEAD
+#               - OPTIONS
+#               - PUT
+#               - POST
+#               - PATCH
+#               - DELETE
+#             ViewerProtocolPolicy: https-only
+#             CachePolicyId: 4d9b452b-d2a7-4da0-8041-eb918d940de0
+#             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+#             Compress: true
+#           HttpVersion: http2and3
+#           IPV6Enabled: true
+
+# outputs:
+#   CloudFrontDomain:
+#     Value:
+#       Fn::GetAtt:
+#         - CloudFrontDistribution
+#         - DomainName
+#     Export:
+#       Name: sls-${self:service}-${self:provider.stage}-CloudFrontDomain

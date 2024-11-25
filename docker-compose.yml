@@ -1,0 +1,28 @@
+services:
+  postgres:
+    container_name: iptv-postgres
+    image: "postgres:15.2-alpine"
+    environment:
+      POSTGRES_USER: iptv
+      POSTGRES_PASSWORD: iptv123
+      POSTGRES_DB: iptv
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - ./.volumes/postgres:/var/lib/postgresql/data
+
+  pgbouncer:
+    container_name: iptv-pgbouncer
+    image: edoburu/pgbouncer
+    environment:
+      - DB_USER=iptv
+      - DB_PASSWORD=iptv123
+      - DB_HOST=postgres
+      - DB_NAME=iptv
+      - AUTH_TYPE=scram-sha-256
+      - POOL_MODE=transaction
+      - ADMIN_USERS=iptv,dbuser
+    ports:
+      - "5432:5432"
+    depends_on:
+      - postgres
